@@ -1,12 +1,17 @@
+// ============================
+// IMPORTS & ENV
+// ============================
 import { Telegraf } from "telegraf";
 import { askDevAI } from "./dev-ai.js";
+import dotenv from "dotenv";
+
+dotenv.config(); // nur lokal nötig, Render nutzt ENV direkt
 
 // ============================
-// ENV CHECK (WICHTIG)
+// ENV CHECK
 // ============================
-if (!process.env.BOT_TOKEN) {
-  throw new Error("❌ BOT_TOKEN fehlt");
-}
+if (!process.env.BOT_TOKEN) throw new Error("❌ BOT_TOKEN fehlt");
+if (!process.env.OPENAI_API_KEY) throw new Error("❌ OPENAI_API_KEY fehlt");
 
 console.log("🤖 Bot startet...");
 console.log(
@@ -30,12 +35,8 @@ const users = new Map();
 // ============================
 function safeReply(ctx, text) {
   const MAX = 4000;
-
   if (!text) return;
-
-  if (text.length <= MAX) {
-    return ctx.reply(text);
-  }
+  if (text.length <= MAX) return ctx.reply(text);
 
   for (let i = 0; i < text.length; i += MAX) {
     ctx.reply(text.slice(i, i + MAX));
@@ -112,7 +113,7 @@ bot.on("web_app_data", (ctx) => {
     // ⭐ GAME LOGIC
     user.stars += 1;
 
-    // OPTIONAL: Nur gelegentlich antworten (Spam vermeiden)
+    // OPTIONAL: nur gelegentlich antworten (Spam vermeiden)
     if (user.stars % 10 === 0) {
       ctx.reply(`⭐ Stars: ${user.stars}`);
     }
@@ -171,6 +172,5 @@ bot.launch().then(() => {
 
 // ============================
 // GRACEFUL SHUTDOWN (Render)
-// ============================
 process.once("SIGINT", () => bot.stop("SIGINT"));
 process.once("SIGTERM", () => bot.stop("SIGTERM"));

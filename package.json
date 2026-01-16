@@ -10,9 +10,11 @@
     "@ton/crypto": "^3.3.0",
     "@ton/ton": "^16.1.0",
     "body-parser": "^2.2.2",
+    "openai": "^4.33.0",
     "dotenv": "^17.2.3",
     "express": "^5.2.1",
     "grammy": "^1.39.2",
-    "omit": "^1.0.1"
+    "omit": "^1.0.1",
+    "telegraf": "^4.16.3"
   }
 }
