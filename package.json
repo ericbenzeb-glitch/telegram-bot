@@ -1,0 +1,16 @@
+{
+  "name": "taskbot",
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "start": "node src/bot.js"
+  },
+  "dependencies": {
+    "@grammyjs/conversations": "^2.1.1",
+    "@ton/crypto": "^3.3.0",
+    "@ton/ton": "^16.1.0",
+    "dotenv": "^17.2.3",
+    "grammy": "^1.39.2",
+    "omit": "^1.0.1"
+  }
+}
