@@ -1,150 +1,52 @@
 import { Bot, InlineKeyboard } from 'grammy';
-import { config } from 'dotenv';
-import fs from 'fs/promises';
-import { TonClient, WalletContractV4 } from '@ton/ton';
-import { mnemonicToPrivateKey } from '@ton/crypto';
-
-config();
-
-const BOT_TOKEN = process.env.BOT_TOKEN?.trim();
-const BOT_USERNAME = process.env.BOT_USERNAME?.trim();
-const TON_SEED = process.env.TON_SEED?.trim();
-const USE_TESTNET = process.env.USE_TESTNET === 'true';
-
-if (!BOT_TOKEN || !BOT_USERNAME || !TON_SEED) {
-  console.error('Fehlende ENV Variablen');
-  process.exit(1);
-}
-
-const endpoint = USE_TESTNET
-  ? 'https://testnet.toncenter.com/api/v2/jsonRPC'
-  : 'https://toncenter.com/api/v2/jsonRPC';
-
-const client = new TonClient({ endpoint });
-
-let wallet = null;
-async function getWallet() {
-  if (!wallet) {
-    const keyPair = await mnemonicToPrivateKey(TON_SEED.split(' '));
-    wallet = client.open(WalletContractV4.create({ workchain: 0, publicKey: keyPair.publicKey }));
-  }
-  return wallet;
-}
-
-const USERS_FILE = './users.json';
-let users = {};
-
-async function loadUsers() {
-  try {
-    users = JSON.parse(await fs.readFile(USERS_FILE, 'utf8'));
-    console.log(`Users geladen: ${Object.keys(users).length}`);
-  } catch {
-    users = {};
-    console.log('users.json neu erstellt');
-  }
-}
-
-async function saveUsers() {
-  const tmp = USERS_FILE + '.tmp';
-  await fs.writeFile(tmp, JSON.stringify(users, null, 2));
-  await fs.rename(tmp, USERS_FILE);
-}
-
-setInterval(() => saveUsers().catch(console.error), 30000);
-
-const bot = new Bot(BOT_TOKEN);
+import { BOT_TOKEN, BOT_USERNAME } from './config.js';
+import { loadUsers, getUser, saveUsers } from './database.js';
+import callbackHandler from './handlers/callbacks.js';
+import startHandler from './handlers/start.js';
+import menuKeyboard from './handlers/menu.js';
 
 await loadUsers();
 
-/* === KORREKTES MENÜ mit WebApp-Button === */
-const menuKeyboard = new InlineKeyboard()
-  .webApp('🎮 Clicker Game spielen!', 'https://stars-ton-clicker.vercel.app') // ← Deine funktionierende URL!
-  .row()
-  .text('💰 Balance', 'show_balance')
-  .text('📊 Stats', 'show_stats')
-  .row()
-  .text('🎁 Daily Reward', 'daily_reward')
-  .row()
-  .text('📋 Aufgaben', 'show_tasks')
-  .text('🔗 Referral-Link', 'get_referral')
-  .row()
-  .text('💸 Withdraw', 'withdraw');
+const bot = new Bot(BOT_TOKEN);
 
-/* ================== COMMANDS ================== */
-bot.command(['start', 'menu'], async (ctx) => {
-  const userId = ctx.from.id.toString();
+bot.use(async (ctx, next) => {
+  // make users accessible in handlers via ctx.users
+  ctx.users = (await import('./database.js')).getAllUsers?.() || {};
+  return next();
+});
 
-  if (!users[userId]) {
-    users[userId] = { balance: 0, referralCount: 0, referredBy: null, dailyStreak: 0, lastDaily: 0, lastAdReward: 0 };
+bot.command(['start', 'menu'], startHandler);
+bot.on('callback_query:data', callbackHandler);
+
+// optional: keep existing web_app_data handler for direct WebApp messages
+bot.on('message:web_app_data', async (ctx) => {
+  try {
+    const userId = ctx.from.id.toString();
+    const user = getUser(userId);
+    const raw = ctx.message.web_app_data.data;
+    let data;
+    try { data = JSON.parse(raw); } catch { return ctx.reply('Ungültige WebApp-Daten.'); }
+
+    const score = Number(data.score ?? 0);
+    const ts = Number(data.ts ?? 0);
+    if (!Number.isFinite(score) || score < 0) return ctx.reply('Ungültiger Score.');
+    if (Math.abs(Date.now() - ts) > 5 * 60 * 1000) return ctx.reply('Daten zu alt oder manipuliert.');
+
+    const reward = Math.floor(score / 100);
+    if (reward <= 0) return ctx.reply('Zu wenig Score für eine Belohnung.');
+
+    user.balance += reward;
     await saveUsers();
-  }
-
-  const text = ctx.message.text || '';
-  if (text.startsWith('/start ref_')) {
-    const refId = text.split('ref_')[1];
-    if (refId && refId !== userId && !users[userId].referredBy && users[refId]) {
-      users[userId].referredBy = refId;
-      users[refId].balance += 1;
-      users[refId].referralCount += 1;
-      await ctx.api.sendMessage(refId, '🎉 Neuer Referral! +1 Point');
-      await saveUsers();
-    }
-  }
-
-  await ctx.reply('Willkommen beim StarsTonBot 🚀', { reply_markup: menuKeyboard });
-});
-
-/* ================== ALLE CALLBACKS REGISTRIEREN ================== */
-bot.on('callback_query:data', async (ctx) => {
-  const userId = ctx.from.id.toString();
-  const user = users[userId] || { balance: 0, referralCount: 0, dailyStreak: 0 };
-  const data = ctx.callbackQuery.data;
-
-  await ctx.answerCallbackQuery();
-
-  switch (data) {
-    case 'show_balance':
-      await ctx.reply(`Deine Balance: ${user.balance} Punkte`);
-      break;
-    case 'show_stats':
-      await ctx.reply(`Stats:\nReferrals: ${user.referralCount}\nStreak: ${user.dailyStreak}`);
-      break;
-    case 'daily_reward':
-      const now = Date.now();
-      const today = Math.floor(now / 86400000) * 86400000;
-      if (user.lastDaily >= today) {
-        await ctx.reply('Heute schon abgeholt!');
-      } else {
-        user.lastDaily = today;
-        user.dailyStreak += 1;
-        user.balance += 1;
-        await saveUsers();
-        await ctx.reply(`+1 Punkt! Streak: ${user.dailyStreak}`);
-      }
-      break;
-    case 'show_tasks':
-      await ctx.reply('Aufgaben kommen bald...');
-      break;
-    case 'get_referral':
-      await ctx.reply(`Dein Link: https://t.me/${BOT_USERNAME}?start=ref_${userId}`);
-      break;
-    case 'withdraw':
-      await ctx.reply('Auszahlung kommt bald!');
-      break;
-    default:
-      await ctx.reply('Unbekannte Aktion');
+    await ctx.reply(`🎮 Score: ${score}\n💰 Belohnung: +${reward} Punkte\nNeue Balance: ${user.balance}`);
+  } catch (err) {
+    console.error('Fehler bei WebApp message handler', err);
   }
 });
-
-/* ================== ERROR-HANDLING & START ================== */
-console.log('Bot wird gestartet...');
 
 bot.start({
-  onStart: (botInfo) => {
-    console.log(`Bot erfolgreich gestartet! @${botInfo.username}`);
-  },
+  onStart: (info) => console.log(`Bot gestartet: @${info.username}`)
 });
 
-bot.catch((err) => {
-  console.error('Fehler im Bot:', err);
-});
+bot.catch((err) => console.error('Bot-Fehler:', err));
+
+export default bot;
