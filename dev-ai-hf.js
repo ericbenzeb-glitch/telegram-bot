@@ -9,17 +9,20 @@ export async function askDevAIHF(question) {
     options: { use_cache: false }
   };
 
-  const res = await fetch(
-    "https://api-inference.huggingface.co/models/your‑chosen‑model",
-    {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${HF_TOKEN}`,
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify(payload)
-    }
-  );
+  const response = await fetch(
+  "https://router.huggingface.co/models/gpt2",
+  {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${HF_TOKEN}`,
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      inputs: `DEV ASSISTANT:\n${question}`,
+      options: { use_cache: false }
+    })
+  }
+);
 
   const json = await res.json();
   if (json.error) throw new Error(json.error);
