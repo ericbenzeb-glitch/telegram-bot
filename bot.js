@@ -1,186 +1,88 @@
 import { Telegraf, Markup } from "telegraf";
-import { askDevAIHF as askDevAI } from "./dev-ai-hf-auto.js";
 import dotenv from "dotenv";
+import { getUser, addToLeaderboard, leaderboard } from "./state.js";
 
 dotenv.config();
-
-if (!process.env.BOT_TOKEN) throw new Error("❌ BOT_TOKEN fehlt");
-if (!process.env.HF_API_KEY) throw new Error("❌ HF_API_KEY fehlt");
-
 const bot = new Telegraf(process.env.BOT_TOKEN);
-const users = new Map();
 
-// ============================
-// Safe Reply
-// ============================
-function safeReply(ctx, text) {
-  const MAX = 4000;
-  if (!text) return;
-  if (text.length <= MAX) return ctx.reply(text);
-
-  for (let i = 0; i < text.length; i += MAX) {
-    ctx.reply(text.slice(i, i + MAX));
-  }
-}
-
-// ============================
-// Start / Menü
-// ============================
-bot.start((ctx) => {
+// ================= START / REFERRAL =================
+bot.start(ctx => {
   const userId = ctx.from.id;
-  if (!users.has(userId)) users.set(userId, {
-    stars: 0,
-    lastClick: 0,
-    clicksInWindow: 0,
-    windowStart: Date.now(),
-    lastDaily: 0,
-    referralCode: String(userId)
-  });
+  const payload = ctx.startPayload;
+  const user = getUser(userId);
+
+  if (payload && payload !== String(userId) && !user.referredBy) {
+    const referrer = getUser(payload);
+    referrer.stars += 5;
+    user.stars += 5;
+    user.referredBy = payload;
+    ctx.reply("🎉 Referral Bonus! +5 Stars");
+  }
 
   ctx.reply(
-    "⭐ Welcome to Stars & TON Clicker Bot!\n\nUse the buttons below to play or access developer tools.",
+    "⭐ Stars & TON Clicker",
     Markup.inlineKeyboard([
-      [Markup.button.webApp("Play Clicker ⭐", "https://stars-ton-clicker.vercel.app")],
-      [Markup.button.callback("View Stars ✨", "view_stars")],
-      [Markup.button.callback("Dev Command 🧠", "dev_info")],
-      [Markup.button.callback("Claim Daily Bonus 🗓️", "daily_bonus")],
-      [Markup.button.callback("Referral 👥", "referral")]
+      [Markup.button.webApp("Play ⭐", "https://stars-ton-clicker.vercel.app")],
+      [Markup.button.callback("Stars ✨", "stars")],
+      [Markup.button.callback("Daily 🎁", "daily")],
+      [Markup.button.callback("Referral 👥", "ref")],
+      [Markup.button.callback("Leaderboard 🏆", "lb")],
+      [Markup.button.callback("Redeem TON 💎", "redeem")]
     ])
   );
 });
 
-// ============================
-// View Stars
-// ============================
-bot.action("view_stars", (ctx) => {
-  const userId = ctx.from.id;
-  const stars = users.get(userId)?.stars || 0;
-  ctx.answerCbQuery(`⭐ Stars: ${stars}`, { show_alert: true });
+// ================= BUTTONS =================
+bot.action("stars", ctx => {
+  ctx.answerCbQuery(`⭐ ${getUser(ctx.from.id).stars}`, { show_alert:true });
 });
 
-// ============================
-// Dev Info Button
-// ============================
-bot.action("dev_info", (ctx) => {
-  ctx.answerCbQuery("Use /dev <question> to ask the developer assistant", { show_alert: true });
-});
-
-// ============================
-// Daily Bonus
-// ============================
-bot.action("daily_bonus", (ctx) => {
-  const userId = ctx.from.id;
-  const user = users.get(userId);
+bot.action("daily", ctx => {
+  const u = getUser(ctx.from.id);
   const now = Date.now();
-  if (!user) return ctx.answerCbQuery("❌ Fehler: Nutzer nicht gefunden", { show_alert: true });
-
-  if (now - user.lastDaily < 24 * 60 * 60 * 1000) {
-    return ctx.answerCbQuery("⏳ Tagesbonus bereits eingelöst", { show_alert: true });
-  }
-
-  user.stars += 10;
-  user.lastDaily = now;
-  ctx.answerCbQuery("🎁 Tagesbonus +10 Stars erhalten!", { show_alert: true });
+  if (now - u.lastDaily < 86400000)
+    return ctx.answerCbQuery("⏳ Morgen wieder", {show_alert:true});
+  u.lastDaily = now;
+  u.stars += 10;
+  ctx.answerCbQuery("🎁 +10 Stars", {show_alert:true});
 });
 
-// ============================
-// Referral
-// ============================
-bot.action("referral", (ctx) => {
-  const userId = ctx.from.id;
-  const user = users.get(userId);
-  if (!user) return ctx.answerCbQuery("❌ Fehler: Nutzer nicht gefunden", { show_alert: true });
-
-  const link = `https://t.me/${ctx.botInfo.username}?start=${user.referralCode}`;
-  ctx.answerCbQuery(`📣 Dein Referral-Link:\n${link}`, { show_alert: true });
+bot.action("ref", ctx => {
+  const link = `https://t.me/${ctx.botInfo.username}?start=${ctx.from.id}`;
+  ctx.answerCbQuery(link, {show_alert:true});
 });
 
-// ============================
-// Handle /start with referral code
-// ============================
-bot.start((ctx) => {
-  const userId = ctx.from.id;
-  const startPayload = ctx.startPayload;
-  if (!users.has(userId)) {
-    users.set(userId, {
-      stars: 0,
-      lastClick: 0,
-      clicksInWindow: 0,
-      windowStart: Date.now(),
-      lastDaily: 0,
-      referralCode: String(userId)
-    });
-  }
+bot.action("lb", ctx => {
+  if (!leaderboard.length)
+    return ctx.answerCbQuery("Noch leer", {show_alert:true});
+  const text = leaderboard.map((e,i)=>`${i+1}. ${e.stars} ⭐`).join("\n");
+  ctx.reply("🏆 Leaderboard\n"+text);
+});
 
-  // Referral
-  if (startPayload && startPayload !== String(userId)) {
-    const referrer = users.get(startPayload);
-    if (referrer) {
-      referrer.stars += 5;
-      users.get(userId).stars += 5;
-      ctx.reply(`🎉 Referral Bonus! Du und ${startPayload} erhaltet je 5 Stars.`);
-    }
+bot.action("redeem", ctx => {
+  const u = getUser(ctx.from.id);
+  if (u.stars < 100)
+    return ctx.answerCbQuery("Mind. 100 Stars nötig", {show_alert:true});
+  u.stars -= 100;
+  ctx.reply("💎 Redeem vorgemerkt (TON Wallet kommt)");
+});
+
+// ================= WEBAPP SYNC =================
+bot.on("web_app_data", ctx => {
+  const data = JSON.parse(ctx.message.web_app_data.data);
+  const u = getUser(ctx.from.id);
+  const now = Date.now();
+
+  if (data.type === "CLICK") {
+    if (now - u.lastClick < 200) return;
+    u.lastClick = now;
+    u.stars++;
+    addToLeaderboard(ctx.from.id, u.stars);
+    ctx.reply(`⭐ ${u.stars}`);
   }
 });
 
-// ============================
-// WebApp Clicker
-// ============================
-bot.on("web_app_data", (ctx) => {
-  try {
-    const userId = ctx.from.id;
-    const data = JSON.parse(ctx.message.web_app_data.data);
-    const now = Date.now();
-    if (data.type !== "CLICK") return;
-
-    if (!users.has(userId)) users.set(userId, { stars: 0, lastClick: 0, clicksInWindow: 0, windowStart: now });
-    const user = users.get(userId);
-
-    if (now - user.lastClick < 200) return;
-    user.lastClick = now;
-
-    if (now - user.windowStart > 1000) { user.windowStart = now; user.clicksInWindow = 0; }
-    user.clicksInWindow++;
-    if (user.clicksInWindow > 8) return;
-
-    user.stars += 1;
-    if (user.stars % 10 === 0) ctx.reply(`⭐ Stars: ${user.stars}`);
-  } catch (err) {
-    console.error("❌ WEBAPP ERROR", err);
-  }
-});
-
-// ============================
-// /dev - HuggingFace AI
-// ============================
-bot.command("dev", async (ctx) => {
-  const question = ctx.message.text.replace("/dev", "").trim();
-  if (!question) return ctx.reply("❓ Bitte eine Frage eingeben");
-
-  if (process.env.ADMIN_ID && String(ctx.from.id) !== String(process.env.ADMIN_ID)) return ctx.reply("⛔ Kein Zugriff");
-
-  await ctx.reply("🤖 Analysiere Projekt & Code...");
-  ctx.sendChatAction("typing");
-
-  try {
-    const answer = await askDevAI(question);
-    safeReply(ctx, answer);
-  } catch (err) {
-    console.error("❌ DEV AI ERROR", err);
-    ctx.reply("⚠️ Fehler bei der KI-Anfrage (siehe Logs)");
-  }
-});
-
-// ============================
-// Global Error Handler
-// ============================
-bot.catch((err) => console.error("🔥 BOT ERROR", err));
-
-// ============================
-// Launch
-// ============================
-bot.launch().then(() => console.log("✅ Bot läuft"));
-
-// Graceful shutdown
-process.once("SIGINT", () => bot.stop("SIGINT"));
-process.once("SIGTERM", () => bot.stop("SIGTERM"));
+// ================= RUN =================
+bot.launch();
+process.once("SIGINT", ()=>bot.stop());
+process.once("SIGTERM", ()=>bot.stop());
