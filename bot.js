@@ -9,6 +9,11 @@ await loadUsers();
 
 const bot = new Bot(BOT_TOKEN);
 
+bot.command("dev", (ctx) => {
+  console.log("DEV COMMAND TRIGGERED");
+  ctx.reply("✅ /dev angekommen");
+});
+
 bot.use(async (ctx, next) => {
   // make users accessible in handlers via ctx.users
   ctx.users = (await import('./database.js')).getAllUsers?.() || {};
@@ -18,6 +23,28 @@ bot.use(async (ctx, next) => {
 bot.command(['start', 'menu'], startHandler);
 bot.on('callback_query:data', callbackHandler);
 
+import { askDevAI } from "./dev-ai.js";
+
+bot.command("dev", async (ctx) => {
+  const question = ctx.message.text.replace("/dev", "").trim();
+
+  if (!question) {
+    return ctx.reply("❓ Stelle mir eine Dev-Frage.\nBeispiel:\n/dev Wie verhindere ich Cheating?");
+  }
+
+  // 🔒 Optional: Nur für dich erlauben
+  // if (ctx.from.id !== 2041130393) return;
+
+  await ctx.reply("🤖 Denke nach...");
+
+  try {
+    const answer = await askDevAI(question);
+    ctx.reply(answer);
+  } catch (err) {
+    console.error(err);
+    ctx.reply("⚠️ Fehler bei der KI-Anfrage.");
+  }
+});
 // optional: keep existing web_app_data handler for direct WebApp messages
 bot.on('message:web_app_data', async (ctx) => {
   try {
