@@ -2,43 +2,32 @@ import fetch from "node-fetch";
 
 export async function askDevAIHF(question) {
   const HF_TOKEN = process.env.HF_API_KEY;
-  if (!HF_TOKEN) throw new Error("HuggingFace Token fehlt");
+  if (!HF_TOKEN) throw new Error("HuggingFace Token fehlt!");
 
-  try {
-    // Router API Endpoint
-    const response = await fetch(
-      "https://router.huggingface.co/models/gpt2", // hier ggf. anderes Modell wählen
-      {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${HF_TOKEN}`,
-          "Content-Type": "application/json"
-        },
-        body: JSON.stringify({
-          inputs: `Du bist ein erfahrener Telegram Bot Entwickler.\nBeantworte die folgende Frage:\n${question}`,
-          options: { use_cache: false }
-        })
-      }
-    );
+  const MODEL = "meta-llama/Llama-3.1-8B-Instruct";
 
-    if (!response.ok) {
-      const text = await response.text();
-      throw new Error(`HuggingFace Router API Fehler: ${response.status} ${text}`);
+  const res = await fetch(
+    "https://router.huggingface.co/v1/chat/completions",
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${HF_TOKEN}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        model: MODEL,
+        messages: [{ role: "system", content: "Du bist ein hilfreicher Entwickler-Assistent." },
+                   { role: "user", content: question }]
+      })
     }
+  );
 
-    const json = await response.json(); // ✅ richtig deklariert
-    // Router API liefert ein Array oder Objekt, je nach Modell
-    // Wir greifen auf generated_text zu
-    if (Array.isArray(json) && json[0]?.generated_text) {
-      return json[0].generated_text;
-    } else if (json.generated_text) {
-      return json.generated_text;
-    } else {
-      return "Keine Antwort vom Modell";
-    }
-
-  } catch (err) {
-    console.error("❌ HF DEV AI ERROR", err);
-    throw err; // damit bot.js den Fehler abfangen kann
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`HF API Fehler ${res.status}: ${text}`);
   }
+
+  const json = await res.json();
+  const answer = json.choices?.[0]?.message?.content;
+  return answer || "Keine Antwort vom Modell";
 }
