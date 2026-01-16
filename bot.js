@@ -11,7 +11,7 @@ const bot = new Telegraf(process.env.BOT_TOKEN);
 const users = new Map();
 
 // ============================
-// HELPER: Safe Reply
+// Safe Reply
 // ============================
 function safeReply(ctx, text) {
   const MAX = 4000;
@@ -24,22 +24,33 @@ function safeReply(ctx, text) {
 }
 
 // ============================
-// START / MENU
+// Start / Menü
 // ============================
 bot.start((ctx) => {
+  const userId = ctx.from.id;
+  if (!users.has(userId)) users.set(userId, {
+    stars: 0,
+    lastClick: 0,
+    clicksInWindow: 0,
+    windowStart: Date.now(),
+    lastDaily: 0,
+    referralCode: String(userId)
+  });
+
   ctx.reply(
-    "⭐ Welcome to Stars & TON Clicker Bot!\n\n" +
-      "Use the buttons below to play or access developer tools.",
+    "⭐ Welcome to Stars & TON Clicker Bot!\n\nUse the buttons below to play or access developer tools.",
     Markup.inlineKeyboard([
       [Markup.button.webApp("Play Clicker ⭐", "https://stars-ton-clicker.vercel.app")],
       [Markup.button.callback("View Stars ✨", "view_stars")],
-      [Markup.button.callback("Dev Command 🧠", "dev_info")]
+      [Markup.button.callback("Dev Command 🧠", "dev_info")],
+      [Markup.button.callback("Claim Daily Bonus 🗓️", "daily_bonus")],
+      [Markup.button.callback("Referral 👥", "referral")]
     ])
   );
 });
 
 // ============================
-// VIEW STARS
+// View Stars
 // ============================
 bot.action("view_stars", (ctx) => {
   const userId = ctx.from.id;
@@ -48,14 +59,72 @@ bot.action("view_stars", (ctx) => {
 });
 
 // ============================
-// DEV INFO BUTTON
+// Dev Info Button
 // ============================
 bot.action("dev_info", (ctx) => {
   ctx.answerCbQuery("Use /dev <question> to ask the developer assistant", { show_alert: true });
 });
 
 // ============================
-// WEBAPP CLICKER
+// Daily Bonus
+// ============================
+bot.action("daily_bonus", (ctx) => {
+  const userId = ctx.from.id;
+  const user = users.get(userId);
+  const now = Date.now();
+  if (!user) return ctx.answerCbQuery("❌ Fehler: Nutzer nicht gefunden", { show_alert: true });
+
+  if (now - user.lastDaily < 24 * 60 * 60 * 1000) {
+    return ctx.answerCbQuery("⏳ Tagesbonus bereits eingelöst", { show_alert: true });
+  }
+
+  user.stars += 10;
+  user.lastDaily = now;
+  ctx.answerCbQuery("🎁 Tagesbonus +10 Stars erhalten!", { show_alert: true });
+});
+
+// ============================
+// Referral
+// ============================
+bot.action("referral", (ctx) => {
+  const userId = ctx.from.id;
+  const user = users.get(userId);
+  if (!user) return ctx.answerCbQuery("❌ Fehler: Nutzer nicht gefunden", { show_alert: true });
+
+  const link = `https://t.me/${ctx.botInfo.username}?start=${user.referralCode}`;
+  ctx.answerCbQuery(`📣 Dein Referral-Link:\n${link}`, { show_alert: true });
+});
+
+// ============================
+// Handle /start with referral code
+// ============================
+bot.start((ctx) => {
+  const userId = ctx.from.id;
+  const startPayload = ctx.startPayload;
+  if (!users.has(userId)) {
+    users.set(userId, {
+      stars: 0,
+      lastClick: 0,
+      clicksInWindow: 0,
+      windowStart: Date.now(),
+      lastDaily: 0,
+      referralCode: String(userId)
+    });
+  }
+
+  // Referral
+  if (startPayload && startPayload !== String(userId)) {
+    const referrer = users.get(startPayload);
+    if (referrer) {
+      referrer.stars += 5;
+      users.get(userId).stars += 5;
+      ctx.reply(`🎉 Referral Bonus! Du und ${startPayload} erhaltet je 5 Stars.`);
+    }
+  }
+});
+
+// ============================
+// WebApp Clicker
 // ============================
 bot.on("web_app_data", (ctx) => {
   try {
@@ -67,19 +136,14 @@ bot.on("web_app_data", (ctx) => {
     if (!users.has(userId)) users.set(userId, { stars: 0, lastClick: 0, clicksInWindow: 0, windowStart: now });
     const user = users.get(userId);
 
-    // Rate-limit: 200ms
     if (now - user.lastClick < 200) return;
     user.lastClick = now;
 
-    // Anti-cheat window: 1s max 8 clicks
     if (now - user.windowStart > 1000) { user.windowStart = now; user.clicksInWindow = 0; }
     user.clicksInWindow++;
     if (user.clicksInWindow > 8) return;
 
-    // Add stars
     user.stars += 1;
-
-    // Notify every 10 stars
     if (user.stars % 10 === 0) ctx.reply(`⭐ Stars: ${user.stars}`);
   } catch (err) {
     console.error("❌ WEBAPP ERROR", err);
@@ -90,7 +154,6 @@ bot.on("web_app_data", (ctx) => {
 // /dev - HuggingFace AI
 // ============================
 bot.command("dev", async (ctx) => {
-  console.log("🧠 /dev command received");
   const question = ctx.message.text.replace("/dev", "").trim();
   if (!question) return ctx.reply("❓ Bitte eine Frage eingeben");
 
@@ -109,16 +172,15 @@ bot.command("dev", async (ctx) => {
 });
 
 // ============================
-// GLOBAL ERROR HANDLER
+// Global Error Handler
 // ============================
 bot.catch((err) => console.error("🔥 BOT ERROR", err));
 
 // ============================
-// LAUNCH BOT
+// Launch
 // ============================
 bot.launch().then(() => console.log("✅ Bot läuft"));
 
-// ============================
-// GRACEFUL SHUTDOWN (Render)
+// Graceful shutdown
 process.once("SIGINT", () => bot.stop("SIGINT"));
 process.once("SIGTERM", () => bot.stop("SIGTERM"));
