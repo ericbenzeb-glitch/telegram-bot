@@ -24,7 +24,10 @@ export async function askDevAIHF(question) {
   }
 );
 
-  const json = await res.json();
+  console.log(json); // einmal loggen, um zu sehen, wo generated_text steckt
+
+// Beispiel Anpassung
+return json[0]?.generated_text || "Keine Antwort vom Modell";
   if (json.error) throw new Error(json.error);
   return json[0]?.generated_text ?? "Keine Antwort";
 }
