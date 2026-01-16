@@ -1,88 +1,144 @@
 import { Telegraf, Markup } from "telegraf";
+import express from "express";
+import bodyParser from "body-parser";
 import dotenv from "dotenv";
-import { getUser, addToLeaderboard, leaderboard } from "./state.js";
 
 dotenv.config();
+
 const bot = new Telegraf(process.env.BOT_TOKEN);
+const app = express();
+app.use(bodyParser.json());
 
-// ================= START / REFERRAL =================
+/* =========================
+   IN-MEMORY STATE
+========================= */
+
+const users = {}; // userId -> data
+
+function getUser(id) {
+  if (!users[id]) {
+    users[id] = {
+      stars: 0,
+      lastClick: 0,
+      lastDaily: 0,
+      refBy: null,
+      referrals: 0
+    };
+  }
+  return users[id];
+}
+
+/* =========================
+   TELEGRAM START / REFERRAL
+========================= */
+
 bot.start(ctx => {
-  const userId = ctx.from.id;
-  const payload = ctx.startPayload;
-  const user = getUser(userId);
+  const user = getUser(ctx.from.id);
 
-  if (payload && payload !== String(userId) && !user.referredBy) {
-    const referrer = getUser(payload);
-    referrer.stars += 5;
-    user.stars += 5;
-    user.referredBy = payload;
-    ctx.reply("🎉 Referral Bonus! +5 Stars");
+  const payload = ctx.startPayload;
+  if (payload && payload.startsWith("ref_")) {
+    const refId = payload.replace("ref_", "");
+    if (refId !== String(ctx.from.id) && !user.refBy) {
+      user.refBy = refId;
+      const refUser = getUser(refId);
+      refUser.stars += 5;
+      refUser.referrals += 1;
+      bot.telegram.sendMessage(
+        refId,
+        "🎉 Neuer Referral! +5 ⭐"
+      );
+    }
   }
 
   ctx.reply(
-    "⭐ Stars & TON Clicker",
+    "✨ Stars & TON Clicker",
     Markup.inlineKeyboard([
-      [Markup.button.webApp("Play ⭐", "https://stars-ton-clicker.vercel.app")],
-      [Markup.button.callback("Stars ✨", "stars")],
-      [Markup.button.callback("Daily 🎁", "daily")],
-      [Markup.button.callback("Referral 👥", "ref")],
-      [Markup.button.callback("Leaderboard 🏆", "lb")],
-      [Markup.button.callback("Redeem TON 💎", "redeem")]
+      [Markup.button.webApp("🎮 Spielen", process.env.WEBAPP_URL)],
+      [Markup.button.callback("🎁 Tagesbonus", "DAILY")],
+      [Markup.button.callback("👥 Referral-Link", "REF")],
+      [Markup.button.callback("📊 Stats", "STATS")]
     ])
   );
 });
 
-// ================= BUTTONS =================
-bot.action("stars", ctx => {
-  ctx.answerCbQuery(`⭐ ${getUser(ctx.from.id).stars}`, { show_alert:true });
-});
+/* =========================
+   CALLBACK BUTTONS
+========================= */
 
-bot.action("daily", ctx => {
+bot.action("DAILY", ctx => {
   const u = getUser(ctx.from.id);
-  const now = Date.now();
-  if (now - u.lastDaily < 86400000)
-    return ctx.answerCbQuery("⏳ Morgen wieder", {show_alert:true});
-  u.lastDaily = now;
+  const today = Math.floor(Date.now() / 86400000);
+
+  if (u.lastDaily === today) {
+    return ctx.answerCbQuery("Heute schon abgeholt ❌", { show_alert: true });
+  }
+
+  u.lastDaily = today;
   u.stars += 10;
-  ctx.answerCbQuery("🎁 +10 Stars", {show_alert:true});
+
+  ctx.answerCbQuery("🎁 +10 Stars!", { show_alert: true });
 });
 
-bot.action("ref", ctx => {
-  const link = `https://t.me/${ctx.botInfo.username}?start=${ctx.from.id}`;
-  ctx.answerCbQuery(link, {show_alert:true});
+bot.action("REF", ctx => {
+  const link = `https://t.me/${ctx.me}?start=ref_${ctx.from.id}`;
+  ctx.reply(
+    `👥 Dein Referral-Link:\n${link}\n\n+5 ⭐ pro Freund`
+  );
 });
 
-bot.action("lb", ctx => {
-  if (!leaderboard.length)
-    return ctx.answerCbQuery("Noch leer", {show_alert:true});
-  const text = leaderboard.map((e,i)=>`${i+1}. ${e.stars} ⭐`).join("\n");
-  ctx.reply("🏆 Leaderboard\n"+text);
-});
-
-bot.action("redeem", ctx => {
+bot.action("STATS", ctx => {
   const u = getUser(ctx.from.id);
-  if (u.stars < 100)
-    return ctx.answerCbQuery("Mind. 100 Stars nötig", {show_alert:true});
-  u.stars -= 100;
-  ctx.reply("💎 Redeem vorgemerkt (TON Wallet kommt)");
+  ctx.reply(
+    `📊 Deine Stats:\n\n⭐ Stars: ${u.stars}\n👥 Referrals: ${u.referrals}`
+  );
 });
 
-// ================= WEBAPP SYNC =================
+/* =========================
+   WEBAPP DATA (KLICKS)
+========================= */
+
 bot.on("web_app_data", ctx => {
-  const data = JSON.parse(ctx.message.web_app_data.data);
-  const u = getUser(ctx.from.id);
-  const now = Date.now();
+  try {
+    const data = JSON.parse(ctx.message.web_app_data.data);
+    const u = getUser(ctx.from.id);
+    const now = Date.now();
 
-  if (data.type === "CLICK") {
-    if (now - u.lastClick < 200) return;
-    u.lastClick = now;
-    u.stars++;
-    addToLeaderboard(ctx.from.id, u.stars);
-    ctx.reply(`⭐ ${u.stars}`);
+    if (data.type === "CLICK") {
+      // Anti-Spam: max 5 Klicks / Sek
+      if (now - u.lastClick < 200) return;
+      u.lastClick = now;
+
+      const value = Math.min(Number(data.value || 1), 10);
+      u.stars += value;
+
+      ctx.reply(`⭐ +${value} | Total: ${u.stars}`);
+    }
+  } catch (e) {
+    console.error("WEBAPP DATA ERROR", e);
   }
 });
 
-// ================= RUN =================
+/* =========================
+   OPTIONAL BACKEND ENDPOINT
+========================= */
+
+app.post("/webapp", (req, res) => {
+  // optional – aktuell nicht zwingend nötig
+  res.json({ ok: true });
+});
+
+/* =========================
+   START
+========================= */
+
 bot.launch();
-process.once("SIGINT", ()=>bot.stop());
-process.once("SIGTERM", ()=>bot.stop());
+app.listen(process.env.PORT || 3000, () =>
+  console.log("🚀 Bot + WebApp Backend läuft")
+);
+
+/* =========================
+   GRACEFUL STOP
+========================= */
+
+process.once("SIGINT", () => bot.stop("SIGINT"));
+process.once("SIGTERM", () => bot.stop("SIGTERM"));
