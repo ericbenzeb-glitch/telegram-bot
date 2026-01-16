@@ -1,7 +1,7 @@
 import fetch from "node-fetch";
 
 const HF_MODELS = [
-  "meta-llama/Llama-3.1-8B-Instruct" // zuverlässiges Router-Modell
+  "meta-llama/Llama-3.1-8B-Instruct"
 ];
 
 let workingModel = null;
@@ -10,7 +10,6 @@ export async function askDevAIHF(question) {
   const HF_TOKEN = process.env.HF_API_KEY;
   if (!HF_TOKEN) throw new Error("HuggingFace Token fehlt!");
 
-  // Wenn schon ein funktionierendes Modell gefunden
   if (workingModel) return await callHF(workingModel, question, HF_TOKEN);
 
   // Auto-Test
