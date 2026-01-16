@@ -33,30 +33,46 @@ function getUser(id) {
 ========================= */
 
 bot.start(ctx => {
-  const user = getUser(ctx.from.id);
-
-  const payload = ctx.startPayload;
-  if (payload && payload.startsWith("ref_")) {
-    const refId = payload.replace("ref_", "");
-    if (refId !== String(ctx.from.id) && !user.refBy) {
-      user.refBy = refId;
-      const refUser = getUser(refId);
-      refUser.stars += 5;
-      refUser.referrals += 1;
-      bot.telegram.sendMessage(
-        refId,
-        "🎉 Neuer Referral! +5 ⭐"
-      );
-    }
-  }
-
   ctx.reply(
     "✨ Stars & TON Clicker",
     Markup.inlineKeyboard([
-      [Markup.button.webApp("🎮 Spielen", process.env.WEBAPP_URL)],
-      [Markup.button.callback("🎁 Tagesbonus", "DAILY")],
-      [Markup.button.callback("👥 Referral-Link", "REF")],
-      [Markup.button.callback("📊 Stats", "STATS")]
+      [
+        {
+          text: "🎮 Spielen",
+          web_app: {
+            url: process.env.WEBAPP_URL
+          }
+        }
+      ],
+      [
+        Markup.button.callback("🎁 Tagesbonus", "DAILY"),
+        Markup.button.callback("📊 Stats", "STATS")
+      ],
+      [
+        Markup.button.callback("👥 Referral-Link", "REF")
+      ]
+    ])
+  );
+});
+bot.start(ctx => {
+  ctx.reply(
+    "✨ Stars & TON Clicker",
+    Markup.inlineKeyboard([
+      [
+        {
+          text: "🎮 Spielen",
+          web_app: {
+            url: process.env.WEBAPP_URL
+          }
+        }
+      ],
+      [
+        Markup.button.callback("🎁 Tagesbonus", "DAILY"),
+        Markup.button.callback("📊 Stats", "STATS")
+      ],
+      [
+        Markup.button.callback("👥 Referral-Link", "REF")
+      ]
     ])
   );
 });
