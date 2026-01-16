@@ -1,79 +1,176 @@
-import { Bot, InlineKeyboard } from 'grammy';
-import { BOT_TOKEN, BOT_USERNAME } from './config.js';
-import { loadUsers, getUser, saveUsers } from './database.js';
-import callbackHandler from './handlers/callbacks.js';
-import startHandler from './handlers/start.js';
-import menuKeyboard from './handlers/menu.js';
-
-await loadUsers();
-
-const bot = new Bot(BOT_TOKEN);
-
-bot.command("dev", (ctx) => {
-  console.log("DEV COMMAND TRIGGERED");
-  ctx.reply("✅ /dev angekommen");
-});
-
-bot.use(async (ctx, next) => {
-  // make users accessible in handlers via ctx.users
-  ctx.users = (await import('./database.js')).getAllUsers?.() || {};
-  return next();
-});
-
-bot.command(['start', 'menu'], startHandler);
-bot.on('callback_query:data', callbackHandler);
-
+import { Telegraf } from "telegraf";
 import { askDevAI } from "./dev-ai.js";
 
+// ============================
+// ENV CHECK (WICHTIG)
+// ============================
+if (!process.env.BOT_TOKEN) {
+  throw new Error("❌ BOT_TOKEN fehlt");
+}
+
+console.log("🤖 Bot startet...");
+console.log(
+  "🔑 OpenAI Key:",
+  process.env.OPENAI_API_KEY ? "OK" : "MISSING"
+);
+
+// ============================
+// BOT INIT
+// ============================
+const bot = new Telegraf(process.env.BOT_TOKEN);
+
+// ============================
+// IN-MEMORY GAME STATE
+// ============================
+const users = new Map();
+// userId -> { stars, lastClick, clicksInWindow, windowStart }
+
+// ============================
+// HELPER: SAFE REPLY
+// ============================
+function safeReply(ctx, text) {
+  const MAX = 4000;
+
+  if (!text) return;
+
+  if (text.length <= MAX) {
+    return ctx.reply(text);
+  }
+
+  for (let i = 0; i < text.length; i += MAX) {
+    ctx.reply(text.slice(i, i + MAX));
+  }
+}
+
+// ============================
+// /start
+// ============================
+bot.start((ctx) => {
+  ctx.reply(
+    "⭐ Welcome to Stars TON Clicker!\n\n" +
+      "Use /play to start the game.\n" +
+      "Use /dev for developer questions (admin only)."
+  );
+});
+
+// ============================
+// /play → WebApp
+// ============================
+bot.command("play", (ctx) => {
+  ctx.reply("🎮 Start the Clicker", {
+    reply_markup: {
+      inline_keyboard: [
+        [
+          {
+            text: "Start Clicker ⭐",
+            web_app: {
+              url: "https://stars-ton-clicker.vercel.app"
+            }
+          }
+        ]
+      ]
+    }
+  });
+});
+
+// ============================
+// WEBAPP GAME AUTHORITY
+// ============================
+bot.on("web_app_data", (ctx) => {
+  try {
+    const userId = ctx.from.id;
+    const data = JSON.parse(ctx.message.web_app_data.data);
+    const now = Date.now();
+
+    if (data.type !== "CLICK") return;
+
+    // INIT USER
+    if (!users.has(userId)) {
+      users.set(userId, {
+        stars: 0,
+        lastClick: 0,
+        clicksInWindow: 0,
+        windowStart: now
+      });
+    }
+
+    const user = users.get(userId);
+
+    // ⏱ RATE LIMIT (200ms)
+    if (now - user.lastClick < 200) return;
+    user.lastClick = now;
+
+    // ⛔ AUTO-CLICKER WINDOW (1s)
+    if (now - user.windowStart > 1000) {
+      user.windowStart = now;
+      user.clicksInWindow = 0;
+    }
+
+    user.clicksInWindow++;
+    if (user.clicksInWindow > 8) return;
+
+    // ⭐ GAME LOGIC
+    user.stars += 1;
+
+    // OPTIONAL: Nur gelegentlich antworten (Spam vermeiden)
+    if (user.stars % 10 === 0) {
+      ctx.reply(`⭐ Stars: ${user.stars}`);
+    }
+  } catch (err) {
+    console.error("❌ WEBAPP ERROR", err);
+  }
+});
+
+// ============================
+// /dev — KI DEV ASSISTANT
+// ============================
 bot.command("dev", async (ctx) => {
+  console.log("🧠 /dev command received");
+
   const question = ctx.message.text.replace("/dev", "").trim();
 
   if (!question) {
-    return ctx.reply("❓ Stelle mir eine Dev-Frage.\nBeispiel:\n/dev Wie verhindere ich Cheating?");
+    return ctx.reply(
+      "❓ Stelle eine Dev-Frage.\n\n" +
+        "Beispiel:\n/dev Wie verhindere ich Cheating?"
+    );
   }
 
-  // 🔒 Optional: Nur für dich erlauben
-  // if (ctx.from.id !== 2041130393) return;
+  // 🔒 OPTIONAL: ADMIN ONLY
+  if (process.env.ADMIN_ID) {
+    if (String(ctx.from.id) !== String(process.env.ADMIN_ID)) {
+      return ctx.reply("⛔ Kein Zugriff");
+    }
+  }
 
-  await ctx.reply("🤖 Denke nach...");
+  await ctx.reply("🤖 Analysiere Projekt & Code...");
+  ctx.sendChatAction("typing");
 
   try {
     const answer = await askDevAI(question);
-    ctx.reply(answer);
+    safeReply(ctx, answer);
   } catch (err) {
-    console.error(err);
-    ctx.reply("⚠️ Fehler bei der KI-Anfrage.");
-  }
-});
-// optional: keep existing web_app_data handler for direct WebApp messages
-bot.on('message:web_app_data', async (ctx) => {
-  try {
-    const userId = ctx.from.id.toString();
-    const user = getUser(userId);
-    const raw = ctx.message.web_app_data.data;
-    let data;
-    try { data = JSON.parse(raw); } catch { return ctx.reply('Ungültige WebApp-Daten.'); }
-
-    const score = Number(data.score ?? 0);
-    const ts = Number(data.ts ?? 0);
-    if (!Number.isFinite(score) || score < 0) return ctx.reply('Ungültiger Score.');
-    if (Math.abs(Date.now() - ts) > 5 * 60 * 1000) return ctx.reply('Daten zu alt oder manipuliert.');
-
-    const reward = Math.floor(score / 100);
-    if (reward <= 0) return ctx.reply('Zu wenig Score für eine Belohnung.');
-
-    user.balance += reward;
-    await saveUsers();
-    await ctx.reply(`🎮 Score: ${score}\n💰 Belohnung: +${reward} Punkte\nNeue Balance: ${user.balance}`);
-  } catch (err) {
-    console.error('Fehler bei WebApp message handler', err);
+    console.error("❌ DEV AI ERROR", err);
+    ctx.reply("⚠️ Fehler bei der KI-Anfrage (siehe Logs)");
   }
 });
 
-bot.start({
-  onStart: (info) => console.log(`Bot gestartet: @${info.username}`)
+// ============================
+// GLOBAL ERROR HANDLER
+// ============================
+bot.catch((err, ctx) => {
+  console.error("🔥 BOT ERROR", err);
 });
 
-bot.catch((err) => console.error('Bot-Fehler:', err));
+// ============================
+// BOT START
+// ============================
+bot.launch().then(() => {
+  console.log("✅ Bot läuft");
+});
 
-export default bot;
+// ============================
+// GRACEFUL SHUTDOWN (Render)
+// ============================
+process.once("SIGINT", () => bot.stop("SIGINT"));
+process.once("SIGTERM", () => bot.stop("SIGTERM"));
