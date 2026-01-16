@@ -2,7 +2,7 @@
 // IMPORTS & ENV
 // ============================
 import { Telegraf } from "telegraf";
-import { askDevAIHF as askDevAI } from "./dev-ai-hf.js";
+import { askDevAIHF as askDevAI } from "./dev-ai-hf-auto.js";
 import dotenv from "dotenv";
 
 dotenv.config(); // nur lokal nötig, Render nutzt ENV direkt
